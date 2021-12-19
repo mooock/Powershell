@@ -1,0 +1,120 @@
+Function Download-YTTrailers {
+param (
+$path = 'C:\Movies',
+$GoogleApiKey = 'GOOGLEAPIKEY',
+$YoutubeDLPath = 'P:\PowerShell-Youtube-dl-3.0.4',
+[SWITCH]$Download
+)
+$YoutubeDLEXE    = Join-Path -Path $YoutubeDLPath -ChildPath 'youtube-dl.exe'
+
+#Error Handling
+If (-not (Test-Path $YoutubeDLEXE)) {
+    Write-Error "Cannot Find Youtube-dl.exe on path $YoutubeDLEXE"
+    break
+}
+
+If (-not (Test-Path $path)) {
+    Write-Error "Cannot find source on path $path "
+    break
+}
+
+    try {
+        $Testsearch = 'Google test'
+        $TestGoogleAPI = "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={0}&key=$GoogleApiKey" -f $Testsearch, $GoogleApiKey
+        Invoke-RestMethod  $TestGoogleAPI | Out-Null
+    } catch {
+        write-host $error[0].Exception -ForegroundColor Red
+        Write-Error "Google Youtube API Error - APIkey might have reached its limit" 
+        break
+    }
+
+Function Get-YouTubeVideos {
+param (
+$search,
+$GoogleApiKey
+)
+  $api_url = "https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={0}&key=$GoogleApiKey" -f $search, $GoogleApiKey
+  $videos = Invoke-RestMethod $api_url
+  $videos
+}
+Function Get-YTTrailer {
+param (
+$GoogleApiKey,
+$YoutubeDLEXE,
+$DestinationPath,
+$Search
+)
+    $SearchTrailer = $Search + ' trailer'
+    #$DestinationFile = Join-Path -Path $DestinationPath -ChildPath $Search  
+
+    try {
+        $YoutubeID = (Get-YouTubeVideos -search $SearchTrailer -GoogleApiKey $GoogleApiKey).items.id.videoid 
+    } catch {
+        $error[0].Exception
+        Write-host "APIkey might have reached its limit"
+        $ErrorReached = $True
+    }
+    
+    $YoutubeURI = "https://www.youtube.com/watch?v=$YoutubeID"
+
+    $ArgList = (
+        '-o',
+        "`"$DestinationPath-trailer.%(ext)s`"",
+        $YoutubeURI
+    ) -join ' '
+
+    If ($YoutubeID) {
+        $FoundTrailer = $True
+    } Else {
+        $FoundTrailer = $False
+    }
+        [PSCUSTOMOBJECT]@{
+            Search      = $Search
+            Destination = "$DestinationPath-trailer.MP4"
+            Found       = $FoundTrailer
+        }
+
+        If ($FoundTrailer) {
+            $process = Start-Process -NoNewWindow -FilePath $YoutubeDLEXE -ArgumentList $ArgList -PassThru -Wait
+        }
+}
+Function Get-FolderTrailer {
+Param(
+    $Path,
+    [SWITCH]$Download
+    )
+
+        $Filesize        = 10000000
+        $FileExtension   = '.mkv'
+        (Get-ChildItem $Path) | ForEach-Object {
+            $FolderFiles = Get-ChildItem -Path $_.FullName
+            $Title = $FolderFiles | Where-Object Extension -like $FileExtension | Where-Object Length -GT $Filesize
+    
+            #Checks for trailers on youtube exist
+            If ($FolderFiles | where basename -like "*-trailer*") {
+                $TrailerValidation = $True
+            } Else {
+                $TrailerValidation = $False
+            }
+
+            If ($Title) {
+                $Destinationfile = $Title.fullname -replace $FileExtension,''
+                [PSCUSTOMOBJECT]@{
+                    Name     = $_.FullName
+                    Title    = $_.name
+                    Path     = $Title.fullname
+                    Filename = $Title.basename
+                    Trailer  = $TrailerValidation
+                    Destination = $Destinationfile
+                }
+            }
+        }
+    }
+    If ($Download) {
+        Get-FolderTrailer -Path $path | Where-Object trailer -eq $false | ForEach-Object {
+            Get-YTTrailer -DestinationPath $_.Destination -Search $_.title -GoogleApiKey $GoogleApiKey -YoutubeDLEXE $YoutubeDLEXE
+        }
+    } Else {
+        Get-FolderTrailer -Path $path 
+    }
+}
